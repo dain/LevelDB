@@ -22,6 +22,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.CharStreams;
 import com.google.common.io.Files;
+import org.iq80.leveldb.CompressionType;
 import org.iq80.leveldb.DB;
 import org.iq80.leveldb.DBFactory;
 import org.iq80.leveldb.DBIterator;
@@ -65,6 +66,7 @@ public class DbBenchmark
     private final boolean useExisting;
     private final Integer writeBufferSize;
     private final File databaseDir;
+    private final boolean compress;
     private final double compressionRatio;
     private final Integer numConcurrentThreads;
     private long startTime;
@@ -112,6 +114,7 @@ public class DbBenchmark
         reads = (Integer) (flags.get(Flag.reads) == null ? flags.get(Flag.num) : flags.get(Flag.reads));
         valueSize = (Integer) flags.get(Flag.value_size);
         writeBufferSize = (Integer) flags.get(Flag.write_buffer_size);
+        compress = (Boolean) flags.get(Flag.compress);
         compressionRatio = (Double) flags.get(Flag.compression_ratio);
         numConcurrentThreads = (Integer) flags.get(Flag.num_concurrent_threads);
         useExisting = (Boolean) flags.get(Flag.use_existing_db);
@@ -236,12 +239,12 @@ public class DbBenchmark
         System.out.printf("Keys:       %d bytes each\n", kKeySize);
         System.out.printf("Values:     %d bytes each (%d bytes after compression)\n",
                 valueSize,
-                (int) (valueSize * compressionRatio + 0.5));
+                (int) (valueSize * (compress ? compressionRatio : 1) + 0.5));
         System.out.printf("Entries:    %d\n", num);
         System.out.printf("RawSize:    %.1f MB (estimated)\n",
                 ((kKeySize + valueSize) * num) / 1048576.0);
         System.out.printf("FileSize:   %.1f MB (estimated)\n",
-                (((kKeySize + valueSize * compressionRatio) * num)
+                (((kKeySize + valueSize * (compress ? compressionRatio : 1)) * num)
                         / 1048576.0));
         printWarnings();
         System.out.printf("------------------------------------------------\n");
@@ -313,6 +316,7 @@ public class DbBenchmark
         if (writeBufferSize != null) {
             options.writeBufferSize(writeBufferSize);
         }
+        options.compressionType(compress ? CompressionType.SNAPPY : CompressionType.NONE);
         db = factory.open(databaseDir, options);
     }
 
@@ -764,6 +768,15 @@ public class DbBenchmark
                     public Object parseValue(String value)
                     {
                         return ImmutableList.copyOf(Splitter.on(",").trimResults().omitEmptyStrings().split(value));
+                    }
+                },
+        // Whether compress data or not
+        compress(true)
+                {
+                    @Override
+                    public Object parseValue(String value)
+                    {
+                        return Boolean.parseBoolean(value);
                     }
                 },
 
