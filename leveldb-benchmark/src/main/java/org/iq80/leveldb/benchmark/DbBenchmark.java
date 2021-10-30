@@ -40,11 +40,16 @@ import org.iq80.leveldb.util.Snappy;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static com.google.common.base.Preconditions.checkArgument;
@@ -61,6 +66,7 @@ public class DbBenchmark
     private final Integer writeBufferSize;
     private final File databaseDir;
     private final double compressionRatio;
+    private final Integer numConcurrentThreads;
     private long startTime;
 
     enum Order
@@ -107,6 +113,7 @@ public class DbBenchmark
         valueSize = (Integer) flags.get(Flag.value_size);
         writeBufferSize = (Integer) flags.get(Flag.write_buffer_size);
         compressionRatio = (Double) flags.get(Flag.compression_ratio);
+        numConcurrentThreads = (Integer) flags.get(Flag.num_concurrent_threads);
         useExisting = (Boolean) flags.get(Flag.use_existing_db);
         heapCounter = 0;
         bytes = 0;
@@ -445,14 +452,67 @@ public class DbBenchmark
 
     private void readSequential()
     {
-        for (int loops = 0; loops < 5; loops++) {
-            DBIterator iterator = db.iterator();
-            for (int i = 0; i < reads && iterator.hasNext(); i++) {
-                Map.Entry<byte[], byte[]> entry = iterator.next();
-                bytes += entry.getKey().length + entry.getValue().length;
-                finishedSingleOp();
+        class Result
+        {
+          private final long opCount;
+          private final long bytes;
+
+          public Result(long opCount, long bytes)
+          {
+              this.opCount = opCount;
+              this.bytes = bytes;
+          }
+
+          public long getOpCount()
+          {
+              return opCount;
+          }
+
+          public long getBytes()
+          {
+              return bytes;
+          }
+        }
+
+        Callable<Result> run = new Callable<Result>()
+        {
+            @Override
+            public Result call() throws Exception
+            {
+                int logicalBytes = 0;
+                int opCount = 0;
+                try (DBIterator iterator = db.iterator()) {
+                    for (int i = 0; i < reads && iterator.hasNext(); i++) {
+                        opCount++;
+                        Map.Entry<byte[], byte[]> entry = iterator.next();
+                        logicalBytes += entry.getKey().length + entry.getValue().length;
+                    }
+                }
+                return new Result(opCount, logicalBytes);
             }
-            Closeables.closeQuietly(iterator);
+        };
+
+        ExecutorService executor = Executors.newFixedThreadPool(numConcurrentThreads);
+        List<Future<Result>> futureList = new ArrayList<Future<Result>>();
+        for (int i = 0; i < numConcurrentThreads; i++) {
+            futureList.add(executor.submit(run));
+        }
+        for (Future<Result> future : futureList) {
+            try {
+                Result result = future.get();
+                done += result.getOpCount();
+                bytes += result.getBytes();
+            }
+            catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        executor.shutdownNow();
+        try {
+            executor.awaitTermination(30, TimeUnit.SECONDS);
+        }
+        catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -794,6 +854,16 @@ public class DbBenchmark
 
         // Maximum number of files to keep open at the same time (use default if == 0)
         open_files(0)
+                {
+                    @Override
+                    public Object parseValue(String value)
+                    {
+                        return Integer.parseInt(value);
+                    }
+                },
+
+        // Number of concurrent threads. Used by sequential read operation only at the moment.
+        num_concurrent_threads(1)
                 {
                     @Override
                     public Object parseValue(String value)
