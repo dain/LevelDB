@@ -64,6 +64,7 @@ import static org.iq80.leveldb.impl.DbConstants.NUM_LEVELS;
 public class DbBenchmark
 {
     private final boolean useExisting;
+    private final Integer blockSize;
     private final Integer writeBufferSize;
     private final File databaseDir;
     private final boolean compress;
@@ -113,6 +114,7 @@ public class DbBenchmark
         num = (Integer) flags.get(Flag.num);
         reads = (Integer) (flags.get(Flag.reads) == null ? flags.get(Flag.num) : flags.get(Flag.reads));
         valueSize = (Integer) flags.get(Flag.value_size);
+        blockSize = (Integer) flags.get(Flag.block_size);
         writeBufferSize = (Integer) flags.get(Flag.write_buffer_size);
         compress = (Boolean) flags.get(Flag.compress);
         compressionRatio = (Double) flags.get(Flag.compression_ratio);
@@ -317,6 +319,7 @@ public class DbBenchmark
             options.writeBufferSize(writeBufferSize);
         }
         options.compressionType(compress ? CompressionType.SNAPPY : CompressionType.NONE);
+        options.blockSize(blockSize.intValue());
         db = factory.open(databaseDir, options);
     }
 
@@ -825,6 +828,16 @@ public class DbBenchmark
 
         // Number of read operations to do.  If negative, do FLAGS_num reads.
         reads(null)
+                {
+                    @Override
+                    public Object parseValue(String value)
+                    {
+                        return Integer.parseInt(value);
+                    }
+                },
+
+        // Size of sstable block
+        block_size(4096)
                 {
                     @Override
                     public Object parseValue(String value)
